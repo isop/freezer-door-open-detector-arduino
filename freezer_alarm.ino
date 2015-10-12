@@ -25,6 +25,9 @@
  */
 
 #include <FlexiTimer2.h>
+#include <avr/sleep.h>
+
+#include "debug_print.h"
 
 /* pin definition */
 const unsigned int SWITCH_PIN = 2;
@@ -32,12 +35,15 @@ const unsigned int BUZZER_PIN = 12;
 const unsigned int LED_PIN = 13;
 
 /* switch open duration */
-const unsigned int SWITCH_OPEN_TIMEOUT_MSEC = 60 * 1000;
+const unsigned int SWITCH_OPEN_TIMEOUT_MSEC = 60UL * 1000UL;
 const unsigned int BUZZER_ENABLE_INTERVAL_MSEC = 500;
 const unsigned int BUZZER_CLOSED_DURATION_MSEC = 100;
 
 /* share timer state for interrupt and timer  */
 static volatile bool enabled_buzzer_timer = false;
+
+/* share sleep mode state for main loop and interrupt  */
+static volatile bool enabled_sleep = true;
 
 /* function definitions */
 bool isOpenedSwitch();
@@ -54,8 +60,12 @@ void handleSwitchClosedBuzzerTimer();
 void enableTimer(const unsigned long duration, void (*func)());
 void disableTimer();
 
+void enableSleepMode();
+void enableSleep();
+void disableSleep();
+
 void setup() {
-  Serial.begin(115200);
+  setupDebugPrint();
 
   pinMode(SWITCH_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);  
@@ -66,12 +76,13 @@ void setup() {
 }
 
 void loop() {
-  /* do nothing in loop */
+  enableSleepMode();
 }
 
 void handleSwitchStateChanged()
 {
   if (isOpenedSwitch()) {
+    disableSleep();
     disableBuzzer();
     disableTimer();
     enableTimer(SWITCH_OPEN_TIMEOUT_MSEC, handleBuzzerTimer);
@@ -80,10 +91,10 @@ void handleSwitchStateChanged()
     disableTimer();
     if (!enabled_buzzer_timer) {
       enableBuzzer();
-      enableTimer(BUZZER_CLOSED_DURATION_MSEC, handleSwitchClosedBuzzerTimer);
     } else {
       disableBuzzer();
     }
+    enableTimer(BUZZER_CLOSED_DURATION_MSEC, handleSwitchClosedBuzzerTimer);
     enabled_buzzer_timer = false;
     disableLed();
   }
@@ -105,15 +116,18 @@ void handleBuzzerTimer()
 void handleSwitchClosedBuzzerTimer()
 {
   enabled_buzzer_timer = false;
-  disableBuzzer();
   disableTimer();
+  disableBuzzer();
+  enableSleep();
 }
 
 bool isOpenedSwitch()
 {
-  return (digitalRead(SWITCH_PIN) == HIGH);
+  const int pin = digitalRead(SWITCH_PIN);
+  debugPrint(millis());
+  debugPrint(pin);
+  return (pin == HIGH);
 }
-
 
 void enableLed()
 {
@@ -150,3 +164,30 @@ void disableTimer()
 {
   FlexiTimer2::stop();
 }
+
+void enableSleepMode()
+{
+  noInterrupts();
+  if (enabled_sleep) {
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    sleep_enable();
+    sleep_bod_disable();
+    interrupts();
+    /* sleep here */
+    sleep_cpu();
+    /* wakeup here after external interrupt */
+    sleep_disable();
+  }
+  interrupts();
+}
+
+void enableSleep()
+{
+  enabled_sleep = true;
+}
+
+void disableSleep()
+{
+  enabled_sleep = false;
+}
+
